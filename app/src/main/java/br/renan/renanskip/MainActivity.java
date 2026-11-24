@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         col.addView(title);
 
         TextView how = new TextView(this);
-        how.setText("Com a música tocando e o celular bloqueado:\n• Segure volume + → próxima faixa\n• Segure volume − → faixa anterior\n\nSegurar não mexe no volume: o celular vibra 1x na próxima e 2x na anterior.\nUm toque rápido continua só mudando o volume.");
+        how.setText("Com a música tocando e o celular bloqueado:\n• Segure volume + → próxima faixa\n• Segure volume − → faixa anterior\n\nAo segurar, o volume volta ao valor de antes do aperto; o celular vibra 1x na próxima e 2x na anterior.\nUm toque rápido continua só mudando o volume.");
         how.setTextSize(16);
         how.setPadding(0, pad / 2, 0, pad);
         col.addView(how);
@@ -74,7 +74,7 @@ public class MainActivity extends Activity {
         col.addView(update);
 
         TextView tip = new TextView(this);
-        tip.setText("No Poco (HyperOS/MIUI): ative Autostart e deixe Economia de bateria em \"Sem restrições\", senão o sistema mata o serviço.");
+        tip.setText("No Poco (HyperOS/MIUI): ative Autostart e deixe Economia de bateria em \"Sem restrições\", senão o sistema mata o serviço. Funciona abaixo do volume máximo (no máximo, segurar + não gera mudança de volume).");
         tip.setTextSize(13);
         tip.setPadding(0, pad, 0, 0);
         col.addView(tip);

@@ -12,10 +12,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.media.AudioManager;
-import android.media.AudioPlaybackConfiguration;
-import android.media.VolumeProvider;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -24,40 +20,33 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.util.Log;
 import android.view.KeyEvent;
 
-import java.util.List;
-
 /**
- * Com a tela bloqueada o Android manda as teclas de volume para a sessão de mídia "remota"
- * (como um Chromecast) em vez de mudar o volume. Enquanto a música toca e o celular está
- * bloqueado, mantemos uma sessão assim: toque na tecla = 1 passo de volume (aplicado por nós);
- * tecla segurada (sem soltar por 450 ms) = troca a faixa, sem mexer no volume.
+ * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
+ * mas o volume de mídia continua mudando. Segurar a tecla gera mudanças em sequência rápida
+ * (auto-repetição); um toque gera uma só. Detectamos a sequência, trocamos a faixa, vibramos
+ * e travamos o volume no valor de antes do aperto enquanto a tecla continuar segurada.
  */
 public class SkipService extends Service {
     static final String PREFS = "prefs", KEY_ENABLED = "enabled", KEY_ONLY_LOCKED = "only_locked";
+    private static final String ACTION_VOLUME = "android.media.VOLUME_CHANGED_ACTION";
+    private static final String EXTRA_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
+    private static final String EXTRA_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
+    private static final String EXTRA_PREV = "android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
 
-    private static final long HOLD_MS = 450;          // ainda apertado depois disso = segurou
-    private static final long STALE_MS = 5000;        // soltura perdida: aperto velho não bloqueia o próximo
-    private static final long REASSERT_MS = 3000;    // retoma as teclas se o player tomar a prioridade
+    private static final long REPEAT_MS = 250;     // intervalo máximo entre passos da auto-repetição
+    private static final int REPEATS_TO_FIRE = 1;  // 1ª repetição rápida já conta como "segurado"
     private static final long RESTART_WINDOW_MS = 3000; // players recomeçam a faixa se já passou disso
+    private static final long NEW_PRESS_MS = 1000; // pausa que marca um novo aperto
+    private static final long SETTLE_MS = 350;     // sem passos por esse tempo = tecla solta
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private AudioManager audio;
-    private MediaSession session;
-    private boolean sessionActive, pressing, fired;
-    private int pressDir;
-    private long lastPreviousAt, pressAt;
-
-    private final Runnable holdFire = () -> { if (pressing && !fired) skip(); };
-    private final Runnable reassert = new Runnable() {
-        @Override public void run() {
-            if (!sessionActive) return;
-            claimKeys();
-            handler.postDelayed(this, REASSERT_MS);
-        }
-    };
+    private long lastEvent, ignoreUntil, lastPreviousAt;
+    private int direction, fastCount, pressStartVolume;
+    private boolean fired;
+    private final Runnable release = this::onRelease;
     private static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
     private final Runnable updateCheck = new Runnable() {
         @Override public void run() {
@@ -66,29 +55,16 @@ public class SkipService extends Service {
         }
     };
 
-    private final BroadcastReceiver screen = new BroadcastReceiver() {
-        @Override public void onReceive(Context c, Intent i) { refresh(); }
-    };
-    private final AudioManager.AudioPlaybackCallback playback = new AudioManager.AudioPlaybackCallback() {
-        @Override public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
-            handler.postDelayed(SkipService.this::refresh, 300);
-        }
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { onVolume(i); }
     };
 
     @Override public void onCreate() {
         super.onCreate();
         audio = getSystemService(AudioManager.class);
-        int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        session = new MediaSession(this, "RenanSkip");
-        session.setPlaybackToRemote(new VolumeProvider(VolumeProvider.VOLUME_CONTROL_RELATIVE, max,
-                audio.getStreamVolume(AudioManager.STREAM_MUSIC)) {
-            @Override public void onAdjustVolume(int direction) { onKey(direction); }
-        });
-        IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_OFF);
-        f.addAction(Intent.ACTION_SCREEN_ON);
-        f.addAction(Intent.ACTION_USER_PRESENT);
-        registerReceiver(screen, f);
-        audio.registerAudioPlaybackCallback(playback, handler);
+        IntentFilter f = new IntentFilter(ACTION_VOLUME);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+        else registerReceiver(receiver, f);
         handler.postDelayed(updateCheck, 60_000);
     }
 
@@ -96,76 +72,65 @@ public class SkipService extends Service {
         Notification n = buildNotification();
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(1, n);
-        refresh();
         return START_STICKY;
     }
 
     @Override public void onDestroy() {
-        unregisterReceiver(screen);
-        audio.unregisterAudioPlaybackCallback(playback);
+        unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
-        session.release();
         super.onDestroy();
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
-    /** Só pega as teclas com música tocando e (por padrão) celular bloqueado; fora disso o volume é o normal. */
-    private void refresh() {
-        boolean onlyLocked = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_ONLY_LOCKED, true);
-        boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked()
-                || !getSystemService(PowerManager.class).isInteractive();
-        boolean want = audio.isMusicActive() && (!onlyLocked || locked);
-        if (want == sessionActive) return;
-        sessionActive = want;
-        Log.d("RenanSkip", "sessão ativa=" + want);
-        session.setActive(want);
-        handler.removeCallbacks(reassert);
-        if (want) handler.post(reassert);
-    }
-
-    /** Sessão "tocando" vai para o topo da fila de volume; a troca PAUSED→PLAYING força isso. */
-    private void claimKeys() {
-        session.setPlaybackState(state(PlaybackState.STATE_PAUSED));
-        session.setPlaybackState(state(PlaybackState.STATE_PLAYING));
-    }
-
-    private static PlaybackState state(int s) {
-        return new PlaybackState.Builder().setState(s, 0, 1f, SystemClock.elapsedRealtime()).build();
-    }
-
-    /**
-     * direction: +1/-1 ao apertar, 0 ao soltar. Com a tela apagada o Android não gera
-     * auto-repetição, então o "segurar" é medido pelo tempo até a soltura.
-     */
-    private void onKey(int direction) {
-        Log.d("RenanSkip", "onKey dir=" + direction + " pressing=" + pressing + " fired=" + fired);
+    private void onVolume(Intent i) {
+        if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
+        int value = i.getIntExtra(EXTRA_VALUE, -1), prev = i.getIntExtra(EXTRA_PREV, -1);
+        if (value < 0 || prev < 0 || value == prev) return;
         long now = SystemClock.elapsedRealtime();
-        if (direction == 0) {
-            handler.removeCallbacks(holdFire);
-            if (pressing && !fired) step(pressDir); // soltou rápido = toque normal de volume
-            pressing = false;
+        if (now < ignoreUntil) return; // mudança feita por nós mesmos
+
+        if (fired) { // tecla ainda segurada após disparar: desfaz cada passo na hora
+            if (value == pressStartVolume) return; // é o nosso próprio ajuste
+            lastEvent = now;
+            lockVolume();
+            handler.removeCallbacks(release);
+            handler.postDelayed(release, SETTLE_MS);
             return;
         }
-        if (pressing && now - pressAt < STALE_MS) return; // repetição do mesmo aperto
-        pressing = true;
+
+        int d = Integer.signum(value - prev);
+        long gap = now - lastEvent;
+        if (d != direction || gap > NEW_PRESS_MS) pressStartVolume = prev;
+        fastCount = (d == direction && gap <= REPEAT_MS) ? fastCount + 1 : 0;
+        direction = d;
+        lastEvent = now;
+
+        if (fastCount >= REPEATS_TO_FIRE && allowedNow()) {
+            fired = true;
+            lockVolume();
+            if (d > 0) sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT); else previous();
+            vibrate(d > 0);
+            handler.postDelayed(release, SETTLE_MS);
+        }
+    }
+
+    private boolean allowedNow() {
+        if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_ONLY_LOCKED, true)) return true;
+        boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked();
+        boolean screenOff = !getSystemService(PowerManager.class).isInteractive();
+        return locked || screenOff;
+    }
+
+    private void lockVolume() {
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, pressStartVolume, 0);
+    }
+
+    private void onRelease() {
+        ignoreUntil = SystemClock.elapsedRealtime() + 300;
+        if (audio.getStreamVolume(AudioManager.STREAM_MUSIC) != pressStartVolume) lockVolume();
         fired = false;
-        pressDir = direction;
-        pressAt = now;
-        handler.removeCallbacks(holdFire);
-        handler.postDelayed(holdFire, HOLD_MS);
-    }
-
-    private void skip() {
-        fired = true;
-        if (pressDir > 0) sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT);
-        else previous();
-        vibrate(pressDir > 0);
-        handler.postDelayed(this::claimKeys, 1000); // o player costuma retomar a prioridade ao trocar
-    }
-
-    private void step(int dir) {
-        audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, 0);
+        fastCount = 0;
     }
 
     /** Players recomeçam a faixa no "anterior" se ela já passou de ~3 s; aí mandamos dois. */
