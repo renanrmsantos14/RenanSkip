@@ -43,7 +43,8 @@ public class SkipService extends Service {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private AudioManager audio;
-    private long lastEvent, ignoreUntil, lastPreviousAt;
+    private long lastEvent, ignoreUntil, lastPreviousAt, lastSkipAt;
+    private static final long SKIP_GRACE_MS = 5000;
     private int direction, fastCount, pressStartVolume;
     private boolean fired, longFired;
     private LongPress longPress;
@@ -95,9 +96,13 @@ public class SkipService extends Service {
     /** Modo toque longo: o sistema só entrega o aperto longo; o volume não muda. */
     private boolean onLongPress(KeyEvent e) {
         if (e.getAction() == KeyEvent.ACTION_UP) { boolean was = longFired; longFired = false; return was; }
-        if (!audio.isMusicActive() || !allowedNow()) return false;
-        if (longFired) return true; // repetições do mesmo aperto
+        if (longFired) return true; // repetições do mesmo aperto, mesmo com o player trocando de faixa
+        long now = SystemClock.elapsedRealtime();
+        // logo após trocar, o player para por um instante e isMusicActive() fica falso
+        boolean playing = audio.isMusicActive() || now - lastSkipAt < SKIP_GRACE_MS;
+        if (!playing || !allowedNow()) return false;
         longFired = true;
+        lastSkipAt = now;
         boolean next = e.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP;
         if (next) sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT); else previous();
         vibrate(next);
