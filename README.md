@@ -9,7 +9,7 @@ App Android mínimo (Java puro, sem dependências) para trocar de música segura
 ## Como funciona
 Com a tela bloqueada, o Android manda as teclas de volume para a sessão de mídia com controle de volume "remoto" (como um Chromecast) que estiver no topo da fila. Enquanto a música toca e o celular está bloqueado, o serviço mantém uma sessão assim (`MediaSession` + `VolumeProvider`):
 - toque (chega a soltura sem repetição) → o app aplica 1 passo no volume de mídia;
-- tecla segurada (chega auto-repetição) → envia `MEDIA_NEXT`/`MEDIA_PREVIOUS` ao player e vibra (1x próxima, 2x anterior), sem mexer no volume.
+- tecla segurada (chega soltura após 450 ms) → envia `MEDIA_NEXT`/`MEDIA_PREVIOUS` ao player e vibra (1x próxima, 2x anterior), sem mexer no volume.
 
 O "anterior" manda dois comandos quando a faixa provavelmente já passou de 3 s (os players recomeçam a faixa no primeiro). A cada 3 s e após cada troca a sessão retoma o topo da fila, porque o player toma a prioridade ao mudar de estado.
 

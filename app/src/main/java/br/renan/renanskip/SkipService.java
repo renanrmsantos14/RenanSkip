@@ -33,12 +33,13 @@ import java.util.List;
  * Com a tela bloqueada o Android manda as teclas de volume para a sessão de mídia "remota"
  * (como um Chromecast) em vez de mudar o volume. Enquanto a música toca e o celular está
  * bloqueado, mantemos uma sessão assim: toque na tecla = 1 passo de volume (aplicado por nós);
- * tecla segurada (chega auto-repetição) = troca a faixa, sem mexer no volume.
+ * tecla segurada (sem soltar por 450 ms) = troca a faixa, sem mexer no volume.
  */
 public class SkipService extends Service {
     static final String PREFS = "prefs", KEY_ENABLED = "enabled", KEY_ONLY_LOCKED = "only_locked";
 
-    private static final long TAP_FALLBACK_MS = 700; // sem repetição nem soltura até aqui = toque
+    private static final long HOLD_MS = 450;          // ainda apertado depois disso = segurou
+    private static final long STALE_MS = 5000;        // soltura perdida: aperto velho não bloqueia o próximo
     private static final long REASSERT_MS = 3000;    // retoma as teclas se o player tomar a prioridade
     private static final long RESTART_WINDOW_MS = 3000; // players recomeçam a faixa se já passou disso
 
@@ -47,9 +48,9 @@ public class SkipService extends Service {
     private MediaSession session;
     private boolean sessionActive, pressing, fired;
     private int pressDir;
-    private long lastPreviousAt;
+    private long lastPreviousAt, pressAt;
 
-    private final Runnable tapFallback = () -> { if (pressing && !fired) step(pressDir); pressing = false; };
+    private final Runnable holdFire = () -> { if (pressing && !fired) skip(); };
     private final Runnable reassert = new Runnable() {
         @Override public void run() {
             if (!sessionActive) return;
@@ -133,25 +134,30 @@ public class SkipService extends Service {
         return new PlaybackState.Builder().setState(s, 0, 1f, SystemClock.elapsedRealtime()).build();
     }
 
-    /** direction: +1/-1 a cada aperto e auto-repetição; 0 ao soltar. */
+    /**
+     * direction: +1/-1 ao apertar, 0 ao soltar. Com a tela apagada o Android não gera
+     * auto-repetição, então o "segurar" é medido pelo tempo até a soltura.
+     */
     private void onKey(int direction) {
         Log.d("RenanSkip", "onKey dir=" + direction + " pressing=" + pressing + " fired=" + fired);
+        long now = SystemClock.elapsedRealtime();
         if (direction == 0) {
-            handler.removeCallbacks(tapFallback);
-            if (pressing && !fired) step(pressDir);
+            handler.removeCallbacks(holdFire);
+            if (pressing && !fired) step(pressDir); // soltou rápido = toque normal de volume
             pressing = false;
             return;
         }
-        if (!pressing) {
-            pressing = true;
-            fired = false;
-            pressDir = direction;
-            handler.postDelayed(tapFallback, TAP_FALLBACK_MS);
-            return;
-        }
-        if (fired) return; // uma troca por aperto
+        if (pressing && now - pressAt < STALE_MS) return; // repetição do mesmo aperto
+        pressing = true;
+        fired = false;
+        pressDir = direction;
+        pressAt = now;
+        handler.removeCallbacks(holdFire);
+        handler.postDelayed(holdFire, HOLD_MS);
+    }
+
+    private void skip() {
         fired = true;
-        handler.removeCallbacks(tapFallback);
         if (pressDir > 0) sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT);
         else previous();
         vibrate(pressDir > 0);
