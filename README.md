@@ -7,9 +7,13 @@ App Android mínimo (Java puro, sem dependências) para trocar de música segura
 - Toque rápido → só muda o volume, como sempre
 
 ## Como funciona
-Com a tela desligada o Android não entrega a tecla de volume a apps comuns (sem root/ADB). Mas o volume de mídia continua mudando, e segurar a tecla gera passos em sequência rápida (auto-repetição). Um serviço em primeiro plano escuta `VOLUME_CHANGED_ACTION`, detecta a sequência, envia `MEDIA_NEXT`/`MEDIA_PREVIOUS` ao player ativo, vibra (1x próxima, 2x anterior) e trava o volume no valor de antes do aperto enquanto a tecla estiver segurada.
+Com a tela bloqueada, o Android manda as teclas de volume para a sessão de mídia com controle de volume "remoto" (como um Chromecast) que estiver no topo da fila. Enquanto a música toca e o celular está bloqueado, o serviço mantém uma sessão assim (`MediaSession` + `VolumeProvider`):
+- toque (chega a soltura sem repetição) → o app aplica 1 passo no volume de mídia;
+- tecla segurada (chega auto-repetição) → envia `MEDIA_NEXT`/`MEDIA_PREVIOUS` ao player e vibra (1x próxima, 2x anterior), sem mexer no volume.
 
-Limite: no volume máximo, segurar + não muda o volume, então não dispara.
+O "anterior" manda dois comandos quando a faixa provavelmente já passou de 3 s (os players recomeçam a faixa no primeiro). A cada 3 s e após cada troca a sessão retoma o topo da fila, porque o player toma a prioridade ao mudar de estado.
+
+Desbloqueado ou sem música tocando, a sessão fica inativa e o volume funciona normalmente.
 
 ## Build e instalação
 ```bash
