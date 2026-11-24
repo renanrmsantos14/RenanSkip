@@ -37,7 +37,7 @@ public class MainActivity extends Activity {
         col.addView(title);
 
         TextView how = new TextView(this);
-        how.setText("Com a música tocando e o celular bloqueado:\n• Segure volume + → próxima faixa\n• Segure volume − → faixa anterior\n\nUm toque rápido continua só mudando o volume.");
+        how.setText("Com a música tocando e o celular bloqueado:\n• Segure volume + → próxima faixa\n• Segure volume − → faixa anterior\n\nO volume não muda: o celular vibra 1x na próxima e 2x na anterior.\nUm toque rápido continua só mudando o volume.");
         how.setTextSize(16);
         how.setPadding(0, pad / 2, 0, pad);
         col.addView(how);

@@ -25,8 +25,8 @@ import android.view.KeyEvent;
 /**
  * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
  * mas o volume de mídia continua mudando. Segurar a tecla gera mudanças em sequência rápida
- * (auto-repetição); um toque gera uma só. Detectamos a sequência, trocamos a faixa e
- * devolvemos o volume ao valor anterior.
+ * (auto-repetição); um toque gera uma só. Detectamos a sequência, trocamos a faixa, vibramos
+ * e travamos o volume no valor de antes do aperto enquanto a tecla continuar segurada.
  */
 public class SkipService extends Service {
     static final String PREFS = "prefs", KEY_ENABLED = "enabled", KEY_ONLY_LOCKED = "only_locked";
@@ -38,14 +38,14 @@ public class SkipService extends Service {
     private static final long REPEAT_MS = 250;     // intervalo máximo entre passos da auto-repetição
     private static final int REPEATS_TO_FIRE = 2;  // passos rápidos seguidos para considerar "segurado"
     private static final long NEW_PRESS_MS = 1000; // pausa que marca um novo aperto
-    private static final long SETTLE_MS = 350;     // espera soltar a tecla antes de restaurar o volume
+    private static final long SETTLE_MS = 350;     // sem passos por esse tempo = tecla solta
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private AudioManager audio;
     private long lastEvent, ignoreUntil;
     private int direction, fastCount, pressStartVolume;
     private boolean fired;
-    private final Runnable restore = this::restoreVolume;
+    private final Runnable release = this::onRelease;
     private static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
     private final Runnable updateCheck = new Runnable() {
         @Override public void run() {
@@ -89,10 +89,12 @@ public class SkipService extends Service {
         long now = SystemClock.elapsedRealtime();
         if (now < ignoreUntil) return; // mudança feita por nós mesmos
 
-        if (fired) { // tecla ainda segurada após disparar: só adia a restauração
+        if (fired) { // tecla ainda segurada após disparar: desfaz cada passo na hora
+            if (value == pressStartVolume) return; // é o nosso próprio ajuste
             lastEvent = now;
-            handler.removeCallbacks(restore);
-            handler.postDelayed(restore, SETTLE_MS);
+            lockVolume();
+            handler.removeCallbacks(release);
+            handler.postDelayed(release, SETTLE_MS);
             return;
         }
 
@@ -105,9 +107,10 @@ public class SkipService extends Service {
 
         if (fastCount >= REPEATS_TO_FIRE && allowedNow()) {
             fired = true;
+            lockVolume();
             sendMediaKey(d > 0 ? KeyEvent.KEYCODE_MEDIA_NEXT : KeyEvent.KEYCODE_MEDIA_PREVIOUS);
-            vibrate();
-            handler.postDelayed(restore, SETTLE_MS);
+            vibrate(d > 0);
+            handler.postDelayed(release, SETTLE_MS);
         }
     }
 
@@ -118,9 +121,13 @@ public class SkipService extends Service {
         return locked || screenOff;
     }
 
-    private void restoreVolume() {
-        ignoreUntil = SystemClock.elapsedRealtime() + 300;
+    private void lockVolume() {
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, pressStartVolume, 0);
+    }
+
+    private void onRelease() {
+        ignoreUntil = SystemClock.elapsedRealtime() + 300;
+        if (audio.getStreamVolume(AudioManager.STREAM_MUSIC) != pressStartVolume) lockVolume();
         fired = false;
         fastCount = 0;
     }
@@ -130,9 +137,12 @@ public class SkipService extends Service {
         audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
     }
 
-    private void vibrate() {
+    /** Próxima: uma vibração. Anterior: duas curtas. */
+    private void vibrate(boolean next) {
         Vibrator v = getSystemService(Vibrator.class);
-        if (v != null) v.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE));
+        if (v == null) return;
+        long[] pattern = next ? new long[]{0, 150} : new long[]{0, 80, 90, 80};
+        v.vibrate(VibrationEffect.createWaveform(pattern, -1));
     }
 
     private Notification buildNotification() {
