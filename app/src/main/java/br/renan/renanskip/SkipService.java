@@ -24,6 +24,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Log;
 import android.view.KeyEvent;
 
 import java.util.List;
@@ -116,6 +117,7 @@ public class SkipService extends Service {
         boolean want = audio.isMusicActive() && (!onlyLocked || locked);
         if (want == sessionActive) return;
         sessionActive = want;
+        Log.d("RenanSkip", "sessão ativa=" + want);
         session.setActive(want);
         handler.removeCallbacks(reassert);
         if (want) handler.post(reassert);
@@ -133,6 +135,7 @@ public class SkipService extends Service {
 
     /** direction: +1/-1 a cada aperto e auto-repetição; 0 ao soltar. */
     private void onKey(int direction) {
+        Log.d("RenanSkip", "onKey dir=" + direction + " pressing=" + pressing + " fired=" + fired);
         if (direction == 0) {
             handler.removeCallbacks(tapFallback);
             if (pressing && !fired) step(pressDir);
