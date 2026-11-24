@@ -1,4 +1,4 @@
-package br.renan.pulafaixa;
+package br.renan.renanskip;
 
 import android.app.KeyguardManager;
 import android.app.Notification;
@@ -46,6 +46,13 @@ public class SkipService extends Service {
     private int direction, fastCount, pressStartVolume;
     private boolean fired;
     private final Runnable restore = this::restoreVolume;
+    private static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
+    private final Runnable updateCheck = new Runnable() {
+        @Override public void run() {
+            new Thread(SkipService.this::notifyUpdate).start();
+            handler.postDelayed(this, UPDATE_EVERY_MS);
+        }
+    };
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { onVolume(i); }
@@ -57,6 +64,7 @@ public class SkipService extends Service {
         IntentFilter f = new IntentFilter(ACTION_VOLUME);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
         else registerReceiver(receiver, f);
+        handler.postDelayed(updateCheck, 60_000);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -133,11 +141,31 @@ public class SkipService extends Service {
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, "svc")
                 .setSmallIcon(android.R.drawable.ic_media_next)
-                .setContentTitle("PulaFaixa ativo")
+                .setContentTitle("RenanSkip ativo")
                 .setContentText("Segure volume + para próxima, volume − para anterior")
                 .setContentIntent(open)
                 .setOngoing(true)
                 .build();
+    }
+
+    /** Avisa por notificação quando há versão nova (uma vez por versão). */
+    private void notifyUpdate() {
+        try {
+            Updater.Release r = Updater.newer();
+            android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+            if (r == null || r.version.equals(p.getString("notified", ""))) return;
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            nm.createNotificationChannel(new NotificationChannel("upd", "Atualizações", NotificationManager.IMPORTANCE_DEFAULT));
+            PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+            nm.notify(2, new Notification.Builder(this, "upd")
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle("RenanSkip v" + r.version + " disponível")
+                    .setContentText("Toque para atualizar")
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .build());
+            p.edit().putString("notified", r.version).apply();
+        } catch (Exception ignored) { } // sem internet: tenta no próximo ciclo
     }
 
     static void sync(Context c) {

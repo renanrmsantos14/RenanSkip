@@ -1,4 +1,4 @@
-package br.renan.pulafaixa;
+package br.renan.renanskip;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -15,9 +15,11 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
-    private Button battery;
+    private Button battery, update;
+    private Updater.Release release;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -30,7 +32,7 @@ public class MainActivity extends Activity {
         col.setPadding(pad, pad * 2, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("PulaFaixa");
+        title.setText("RenanSkip");
         title.setTextSize(28);
         col.addView(title);
 
@@ -66,6 +68,11 @@ public class MainActivity extends Activity {
         app.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
         col.addView(app);
 
+        update = new Button(this);
+        update.setVisibility(android.view.View.GONE);
+        update.setOnClickListener(v -> installUpdate());
+        col.addView(update);
+
         TextView tip = new TextView(this);
         tip.setText("No Poco (HyperOS/MIUI): ative Autostart e deixe Economia de bateria em \"Sem restrições\", senão o sistema mata o serviço. Funciona abaixo do volume máximo (no máximo, segurar + não gera mudança de volume).");
         tip.setTextSize(13);
@@ -93,5 +100,41 @@ public class MainActivity extends Activity {
         battery.setEnabled(!ignoring);
         if (ignoring) battery.setText("Bateria liberada ✓");
         SkipService.sync(this);
+        checkUpdate();
+    }
+
+    private void checkUpdate() {
+        new Thread(() -> {
+            try {
+                Updater.Release r = Updater.newer();
+                runOnUiThread(() -> {
+                    release = r;
+                    update.setVisibility(r == null ? android.view.View.GONE : android.view.View.VISIBLE);
+                    if (r != null) { update.setEnabled(true); update.setText("Atualizar para v" + r.version); }
+                });
+            } catch (Exception ignored) { } // sem internet: tenta de novo na próxima abertura
+        }).start();
+    }
+
+    private void installUpdate() {
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            Toast.makeText(this, "Permita instalar apps do RenanSkip e volte aqui", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        Updater.Release r = release;
+        update.setEnabled(false);
+        update.setText("Baixando v" + r.version + "…");
+        new Thread(() -> {
+            try {
+                Updater.install(getApplicationContext(), r);
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    update.setEnabled(true);
+                    update.setText("Atualizar para v" + r.version);
+                    Toast.makeText(this, "Falha na atualização: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        }).start();
     }
 }

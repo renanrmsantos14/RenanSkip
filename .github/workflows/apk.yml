@@ -1,0 +1,58 @@
+name: APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Versão própria: 0.0.<número do build>.
+      - name: Versão
+        id: ver
+        run: |
+          echo "version=0.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "date=$(TZ=America/Sao_Paulo date '+%d/%m/%Y %H:%M')" >> "$GITHUB_OUTPUT"
+
+      # Assinatura fixa (secret) para o celular aceitar atualizações sem desinstalar.
+      - name: Compilar e assinar
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "Secret KEYSTORE_BASE64 ausente"; exit 1; }
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.p12"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_FILE"
+          ./gradlew assembleRelease -q -PbuildNumber=${{ github.run_number }}
+          rm "$KEYSTORE_FILE"
+          APK="renanskip-v${{ steps.ver.outputs.version }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$APK"
+          "$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner" verify "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: RenanSkip v${{ steps.ver.outputs.version }} · ${{ steps.ver.outputs.date }}
+          body: APK gerado a partir de ${{ github.sha }}. O app instalado avisa e atualiza sozinho.
+          files: |
+            renanskip-v${{ steps.ver.outputs.version }}.apk
+            renanskip-v${{ steps.ver.outputs.version }}.apk.sha256

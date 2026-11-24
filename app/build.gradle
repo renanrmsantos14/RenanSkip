@@ -1,20 +1,33 @@
 plugins { id 'com.android.application' }
 
 android {
-    namespace 'br.renan.pulafaixa'
+    namespace 'br.renan.renanskip'
     compileSdk 34
     defaultConfig {
-        applicationId 'br.renan.pulafaixa'
+        applicationId 'br.renan.renanskip'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '0.0.1'
+        // CI passa -PbuildNumber=<run_number>: versão 0.0.<n>, versionCode <n>.
+        def build = (project.findProperty('buildNumber') ?: '1') as int
+        versionCode build
+        versionName "0.0.${build}"
         buildConfigField 'String', 'BUILD_TIME', "\"${new Date().format('dd/MM/yyyy HH:mm', TimeZone.getTimeZone('America/Sao_Paulo'))}\""
+    }
+    // Chave fixa (secrets no CI) para o Android aceitar atualizar por cima.
+    def ks = System.getenv('KEYSTORE_FILE')
+    signingConfigs {
+        if (ks) release {
+            storeFile file(ks)
+            storeType 'PKCS12'
+            storePassword System.getenv('KEYSTORE_PASSWORD')
+            keyAlias 'renanskip'
+            keyPassword System.getenv('KEYSTORE_PASSWORD')
+        }
     }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig ks ? signingConfigs.release : signingConfigs.debug
         }
     }
     buildFeatures { buildConfig true }

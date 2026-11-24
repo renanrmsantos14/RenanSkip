@@ -1,4 +1,4 @@
-package br.renan.pulafaixa;
+package br.renan.renanskip;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
