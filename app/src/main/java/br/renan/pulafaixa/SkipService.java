@@ -1,0 +1,148 @@
+package br.renan.pulafaixa;
+
+import android.app.KeyguardManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.ServiceInfo;
+import android.media.AudioManager;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.KeyEvent;
+
+/**
+ * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
+ * mas o volume de mídia continua mudando. Segurar a tecla gera mudanças em sequência rápida
+ * (auto-repetição); um toque gera uma só. Detectamos a sequência, trocamos a faixa e
+ * devolvemos o volume ao valor anterior.
+ */
+public class SkipService extends Service {
+    static final String PREFS = "prefs", KEY_ENABLED = "enabled", KEY_ONLY_LOCKED = "only_locked";
+    private static final String ACTION_VOLUME = "android.media.VOLUME_CHANGED_ACTION";
+    private static final String EXTRA_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
+    private static final String EXTRA_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
+    private static final String EXTRA_PREV = "android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
+
+    private static final long REPEAT_MS = 250;     // intervalo máximo entre passos da auto-repetição
+    private static final int REPEATS_TO_FIRE = 2;  // passos rápidos seguidos para considerar "segurado"
+    private static final long NEW_PRESS_MS = 1000; // pausa que marca um novo aperto
+    private static final long SETTLE_MS = 350;     // espera soltar a tecla antes de restaurar o volume
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private AudioManager audio;
+    private long lastEvent, ignoreUntil;
+    private int direction, fastCount, pressStartVolume;
+    private boolean fired;
+    private final Runnable restore = this::restoreVolume;
+
+    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { onVolume(i); }
+    };
+
+    @Override public void onCreate() {
+        super.onCreate();
+        audio = getSystemService(AudioManager.class);
+        IntentFilter f = new IntentFilter(ACTION_VOLUME);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+        else registerReceiver(receiver, f);
+    }
+
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        Notification n = buildNotification();
+        if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        else startForeground(1, n);
+        return START_STICKY;
+    }
+
+    @Override public void onDestroy() {
+        unregisterReceiver(receiver);
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    private void onVolume(Intent i) {
+        if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
+        int value = i.getIntExtra(EXTRA_VALUE, -1), prev = i.getIntExtra(EXTRA_PREV, -1);
+        if (value < 0 || prev < 0 || value == prev) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now < ignoreUntil) return; // mudança feita por nós mesmos
+
+        if (fired) { // tecla ainda segurada após disparar: só adia a restauração
+            lastEvent = now;
+            handler.removeCallbacks(restore);
+            handler.postDelayed(restore, SETTLE_MS);
+            return;
+        }
+
+        int d = Integer.signum(value - prev);
+        long gap = now - lastEvent;
+        if (d != direction || gap > NEW_PRESS_MS) pressStartVolume = prev;
+        fastCount = (d == direction && gap <= REPEAT_MS) ? fastCount + 1 : 0;
+        direction = d;
+        lastEvent = now;
+
+        if (fastCount >= REPEATS_TO_FIRE && allowedNow()) {
+            fired = true;
+            sendMediaKey(d > 0 ? KeyEvent.KEYCODE_MEDIA_NEXT : KeyEvent.KEYCODE_MEDIA_PREVIOUS);
+            vibrate();
+            handler.postDelayed(restore, SETTLE_MS);
+        }
+    }
+
+    private boolean allowedNow() {
+        if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_ONLY_LOCKED, true)) return true;
+        boolean locked = getSystemService(KeyguardManager.class).isKeyguardLocked();
+        boolean screenOff = !getSystemService(PowerManager.class).isInteractive();
+        return locked || screenOff;
+    }
+
+    private void restoreVolume() {
+        ignoreUntil = SystemClock.elapsedRealtime() + 300;
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, pressStartVolume, 0);
+        fired = false;
+        fastCount = 0;
+    }
+
+    private void sendMediaKey(int code) {
+        audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
+        audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
+    }
+
+    private void vibrate() {
+        Vibrator v = getSystemService(Vibrator.class);
+        if (v != null) v.vibrate(VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE));
+    }
+
+    private Notification buildNotification() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.createNotificationChannel(new NotificationChannel("svc", "Serviço ativo", NotificationManager.IMPORTANCE_MIN));
+        PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+        return new Notification.Builder(this, "svc")
+                .setSmallIcon(android.R.drawable.ic_media_next)
+                .setContentTitle("PulaFaixa ativo")
+                .setContentText("Segure volume + para próxima, volume − para anterior")
+                .setContentIntent(open)
+                .setOngoing(true)
+                .build();
+    }
+
+    static void sync(Context c) {
+        Intent i = new Intent(c, SkipService.class);
+        if (c.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_ENABLED, false)) c.startForegroundService(i);
+        else c.stopService(i);
+    }
+}

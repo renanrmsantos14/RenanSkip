@@ -1,0 +1,25 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'br.renan.pulafaixa'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'br.renan.pulafaixa'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.0.1'
+        buildConfigField 'String', 'BUILD_TIME', "\"${new Date().format('dd/MM/yyyy HH:mm', TimeZone.getTimeZone('America/Sao_Paulo'))}\""
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
