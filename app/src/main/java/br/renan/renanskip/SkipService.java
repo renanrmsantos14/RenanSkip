@@ -45,7 +45,8 @@ public class SkipService extends Service {
     private AudioManager audio;
     private long lastEvent, ignoreUntil, lastPreviousAt;
     private int direction, fastCount, pressStartVolume;
-    private boolean fired;
+    private boolean fired, longFired;
+    private LongPress longPress;
     private final Runnable release = this::onRelease;
     private static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
     private final Runnable updateCheck = new Runnable() {
@@ -62,9 +63,12 @@ public class SkipService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         audio = getSystemService(AudioManager.class);
-        IntentFilter f = new IntentFilter(ACTION_VOLUME);
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
-        else registerReceiver(receiver, f);
+        longPress = LongPress.start(this, handler, this::onLongPress);
+        if (longPress == null) { // sem a permissão do ADB: detecta pela mudança de volume
+            IntentFilter f = new IntentFilter(ACTION_VOLUME);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+            else registerReceiver(receiver, f);
+        }
         handler.postDelayed(updateCheck, 60_000);
     }
 
@@ -72,16 +76,33 @@ public class SkipService extends Service {
         Notification n = buildNotification();
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else startForeground(1, n);
+        if (longPress == null && LongPress.granted(this)) { // permissão dada pelo ADB com o serviço rodando
+            longPress = LongPress.start(this, handler, this::onLongPress);
+            if (longPress != null) unregisterReceiver(receiver);
+        }
         return START_STICKY;
     }
 
     @Override public void onDestroy() {
-        unregisterReceiver(receiver);
+        if (longPress != null) longPress.stop();
+        else unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
+
+    /** Modo toque longo: o sistema só entrega o aperto longo; o volume não muda. */
+    private boolean onLongPress(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_UP) { boolean was = longFired; longFired = false; return was; }
+        if (!audio.isMusicActive() || !allowedNow()) return false;
+        if (longFired) return true; // repetições do mesmo aperto
+        longFired = true;
+        boolean next = e.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP;
+        if (next) sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT); else previous();
+        vibrate(next);
+        return true;
+    }
 
     private void onVolume(Intent i) {
         if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;

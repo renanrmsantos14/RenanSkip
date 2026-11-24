@@ -19,6 +19,7 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private Button battery, update;
+    private TextView mode;
     private Updater.Release release;
 
     @Override protected void onCreate(Bundle b) {
@@ -79,6 +80,12 @@ public class MainActivity extends Activity {
         tip.setPadding(0, pad, 0, 0);
         col.addView(tip);
 
+        mode = new TextView(this);
+        mode.setTextSize(13);
+        mode.setTextIsSelectable(true);
+        mode.setPadding(0, pad, 0, 0);
+        col.addView(mode);
+
         TextView ver = new TextView(this);
         ver.setText("v" + BuildConfig.VERSION_NAME + " · " + BuildConfig.BUILD_TIME);
         ver.setTextSize(11);
@@ -99,6 +106,9 @@ public class MainActivity extends Activity {
         boolean ignoring = getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
         battery.setEnabled(!ignoring);
         if (ignoring) battery.setText("Bateria liberada ✓");
+        mode.setText(LongPress.granted(this)
+                ? "Modo sem mexer no volume: ativo ✓"
+                : "Para o volume não mexer ao segurar, libere uma vez pelo computador (ADB):\nadb shell pm grant " + getPackageName() + " " + LongPress.PERMISSION);
         SkipService.sync(this);
         checkUpdate();
     }

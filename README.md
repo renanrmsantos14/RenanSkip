@@ -7,6 +7,16 @@ App Android mínimo (Java puro, sem dependências) para trocar de música segura
 - Toque rápido → só muda o volume, como sempre
 
 ## Como funciona
+### Modo sem mexer no volume (recomendado, libera uma vez pelo ADB)
+Usa o ouvinte de toque longo no volume do próprio Android (`MediaSessionManager.setOnVolumeKeyLongPressListener`, mesma técnica do [Skip Track](https://github.com/Cilenco/skipTrackLongPressVolume)). O sistema aplica o toque curto como volume e só entrega ao app o aperto longo, então segurar não altera o volume. A API é de sistema: o app acessa via [HiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass) e precisa desta permissão, dada uma vez:
+
+```
+adb shell pm grant br.renan.renanskip android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER
+```
+
+Sem a permissão, o app usa o modo abaixo.
+
+### Modo padrão (sem ADB)
 Com a tela apagada o Android não entrega a tecla de volume a apps comuns, mas o volume de mídia continua mudando e o sistema avisa (`VOLUME_CHANGED_ACTION`). Segurar a tecla gera passos em sequência rápida (auto-repetição); um toque gera um só.
 - toque → volume muda normalmente;
 - segurar (1ª repetição rápida, ~0,5 s) → envia `MEDIA_NEXT`/`MEDIA_PREVIOUS`, vibra (1x próxima, 2x anterior) e devolve o volume ao valor de antes do aperto enquanto a tecla continuar segurada.
