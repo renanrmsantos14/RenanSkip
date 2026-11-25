@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     private Toggle enabled;
     private LinearLayout reqs;
     private Updater.Release release;
+    private TextView diagText;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -149,7 +150,31 @@ public class MainActivity extends Activity {
         lr.addView(onlyLocked, new LinearLayout.LayoutParams(dp(52), dp(32)));
         pref.addView(lr);
         pressable(pref, v -> onlyLocked.toggle());
-        col.addView(pref, spaced(0));
+        col.addView(pref, spaced(28));
+
+        // Diagnóstico: eventos recentes do serviço, para copiar e mandar
+        col.addView(label("Diagnóstico"));
+        LinearLayout diag = card();
+        diagText = text("", 11, muted, false);
+        diagText.setTypeface(Typeface.MONOSPACE);
+        diagText.setTextIsSelectable(true);
+        diagText.setPadding(dp(18), dp(14), dp(18), dp(4));
+        diag.addView(diagText);
+        LinearLayout dr = row();
+        dr.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView copy = text("Copiar", 13, ink, true);
+        copy.setPadding(dp(12), dp(6), dp(12), dp(6));
+        pressable(copy, v -> {
+            getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("diag", String.join("\n", Diag.read(this))));
+            Toast.makeText(this, "Diagnóstico copiado", Toast.LENGTH_SHORT).show();
+        });
+        TextView clear = text("Limpar", 13, muted, true);
+        clear.setPadding(dp(12), dp(6), dp(12), dp(6));
+        pressable(clear, v -> { Diag.clear(this); render(); });
+        dr.addView(clear);
+        dr.addView(copy);
+        diag.addView(dr);
+        col.addView(diag, spaced(48));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -183,6 +208,9 @@ public class MainActivity extends Activity {
 
     /** Estado + requisitos. Conta como problema só o que dá para detectar (Autostart não dá). */
     private void render() {
+        java.util.List<String> d = Diag.read(this);
+        java.util.List<String> last = d.subList(Math.max(0, d.size() - 30), d.size());
+        diagText.setText(last.isEmpty() ? "Sem eventos ainda." : String.join("\n", last));
         boolean on = prefs.getBoolean(SkipService.KEY_ENABLED, false);
         boolean adb = LongPress.granted(this);
         boolean battery = getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());

@@ -74,7 +74,21 @@ public class SkipService extends Service {
      */
     private PowerManager.WakeLock awake;
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context c, Intent i) { updateWakeLock(); }
+        @Override public void onReceive(Context c, Intent i) {
+            boolean off = Intent.ACTION_SCREEN_OFF.equals(i.getAction());
+            Diag.log(c, off ? "tela apagou" : "tela acendeu");
+            updateWakeLock();
+            handler.removeCallbacks(heartbeat);
+            if (off) handler.postDelayed(heartbeat, HEARTBEAT_MS);
+        }
+    };
+    /** Com a tela apagada: se as linhas "vivo" somem ou atrasam, o sistema congelou o app. */
+    private static final long HEARTBEAT_MS = 20_000;
+    private final Runnable heartbeat = new Runnable() {
+        @Override public void run() {
+            Diag.log(SkipService.this, "vivo · música=" + audio.isMusicActive() + " · wakelock=" + awake.isHeld());
+            handler.postDelayed(this, HEARTBEAT_MS);
+        }
     };
     private final AudioManager.AudioPlaybackCallback playback = new AudioManager.AudioPlaybackCallback() {
         @Override public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
@@ -104,13 +118,14 @@ public class SkipService extends Service {
         registerReceiver(screenReceiver, sf);
         audio.registerAudioPlaybackCallback(playback, handler);
         updateWakeLock();
+        Diag.log(this, "serviço iniciou · toque longo=" + (longPress != null) + " · v" + BuildConfig.VERSION_NAME);
     }
 
     private void updateWakeLock() {
         boolean screenOff = !getSystemService(PowerManager.class).isInteractive();
         boolean need = screenOff && audio.isMusicActive();
-        if (need && !awake.isHeld()) awake.acquire();
-        else if (!need && awake.isHeld()) awake.release();
+        if (need && !awake.isHeld()) { awake.acquire(); Diag.log(this, "wakelock ligado"); }
+        else if (!need && awake.isHeld()) { awake.release(); Diag.log(this, "wakelock desligado"); }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -126,6 +141,7 @@ public class SkipService extends Service {
     }
 
     @Override public void onDestroy() {
+        Diag.log(this, "serviço parou");
         running = false;
         longPressActive = false;
         if (longPress != null) longPress.stop();
@@ -141,6 +157,16 @@ public class SkipService extends Service {
 
     /** Modo toque longo: o sistema só entrega o aperto longo; o volume não muda. */
     private boolean onLongPress(KeyEvent e) {
+        boolean handled = handleLongPress(e);
+        Diag.log(this, "tecla " + (e.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP ? "+" : "−")
+                + (e.getAction() == KeyEvent.ACTION_DOWN ? " desceu" : " subiu") + " rep=" + e.getRepeatCount()
+                + " atraso=" + (SystemClock.uptimeMillis() - e.getEventTime()) + "ms"
+                + " música=" + audio.isMusicActive() + " permitido=" + allowedNow()
+                + (handled ? " → tratou" : " → volume"));
+        return handled;
+    }
+
+    private boolean handleLongPress(KeyEvent e) {
         if (e.getAction() == KeyEvent.ACTION_UP) { boolean was = longFired; longFired = false; return was; }
         if (longFired) return true; // repetições do mesmo aperto, mesmo com o player trocando de faixa
         long now = SystemClock.elapsedRealtime();
@@ -157,6 +183,7 @@ public class SkipService extends Service {
 
     private void onVolume(Intent i) {
         if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
+        Diag.log(this, "volume " + i.getIntExtra(EXTRA_PREV, -1) + "→" + i.getIntExtra(EXTRA_VALUE, -1));
         int value = i.getIntExtra(EXTRA_VALUE, -1), prev = i.getIntExtra(EXTRA_PREV, -1);
         if (value < 0 || prev < 0 || value == prev) return;
         long now = SystemClock.elapsedRealtime();
