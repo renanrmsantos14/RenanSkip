@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
@@ -20,9 +21,14 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.view.Display;
 import android.view.KeyEvent;
 
 /**
+ * Com a tela 100% apagada o HyperOS não gera auto-repetição das teclas de volume, então
+ * "segurar" não existe ali. Nesse estado soltamos o ouvinte de toque longo e usamos o toque
+ * duplo bem rápido (DOUBLE_TAP_MS). Com a tela acesa ou no AOD, vale o segurar.
+ *
  * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
  * mas o volume de mídia continua mudando. Segurar a tecla gera mudanças em sequência rápida
  * (auto-repetição); um toque gera uma só. Detectamos a sequência, trocamos a faixa, vibramos
@@ -38,9 +44,9 @@ public class SkipService extends Service {
     private static final String EXTRA_PREV = "android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
 
     private static final long REPEAT_MS = 250;     // intervalo máximo entre passos da auto-repetição
+    private static final long DOUBLE_TAP_MS = 250; // tela apagada: intervalo máximo entre os dois toques
     private static final int REPEATS_TO_FIRE = 1;  // 1ª repetição rápida já conta como "segurado"
     private static final long RESTART_WINDOW_MS = 3000; // players recomeçam a faixa se já passou disso
-    private static final long NEW_PRESS_MS = 1000; // pausa que marca um novo aperto
     private static final long SETTLE_MS = 350;     // sem passos por esse tempo = tecla solta
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -48,7 +54,13 @@ public class SkipService extends Service {
     private long lastEvent, ignoreUntil, lastPreviousAt, lastSkipAt;
     private static final long SKIP_GRACE_MS = 5000;
     private int direction, fastCount, pressStartVolume;
-    private boolean fired, longFired;
+    private boolean fired, longFired, screenOff;
+    private DisplayManager displays;
+    private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
+        @Override public void onDisplayAdded(int id) { }
+        @Override public void onDisplayRemoved(int id) { }
+        @Override public void onDisplayChanged(int id) { if (id == Display.DEFAULT_DISPLAY) updateDisplay(false); }
+    };
     private LongPress longPress;
     private final Runnable release = this::onRelease;
     private static final long UPDATE_EVERY_MS = 6 * 60 * 60 * 1000L;
@@ -75,11 +87,13 @@ public class SkipService extends Service {
         longPress = LongPress.start(this, handler, this::onLongPress);
         running = true;
         longPressActive = longPress != null;
-        if (longPress == null) { // sem a permissão do ADB: detecta pela mudança de volume
-            IntentFilter f = new IntentFilter(ACTION_VOLUME);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
-            else registerReceiver(receiver, f);
-        }
+        // sem a permissão do ADB, ou com a tela 100% apagada: detecta pela mudança de volume
+        IntentFilter f = new IntentFilter(ACTION_VOLUME);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+        else registerReceiver(receiver, f);
+        displays = getSystemService(DisplayManager.class);
+        displays.registerDisplayListener(displayListener, handler);
+        updateDisplay(true);
         handler.postDelayed(updateCheck, 60_000);
         IntentFilter sf = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         sf.addAction(Intent.ACTION_SCREEN_ON);
@@ -93,8 +107,8 @@ public class SkipService extends Service {
         else startForeground(1, n);
         if (longPress == null && LongPress.granted(this)) { // permissão dada pelo ADB com o serviço rodando
             longPress = LongPress.start(this, handler, this::onLongPress);
-            if (longPress != null) unregisterReceiver(receiver);
             longPressActive = longPress != null;
+            updateDisplay(true);
         }
         return START_STICKY;
     }
@@ -104,10 +118,21 @@ public class SkipService extends Service {
         unregisterReceiver(screenReceiver);
         running = false;
         longPressActive = false;
+        displays.unregisterDisplayListener(displayListener);
         if (longPress != null) longPress.stop();
-        else unregisterReceiver(receiver);
+        unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    /** Tela 100% apagada (não AOD): solta o ouvinte para o volume mudar já ao apertar. */
+    private void updateDisplay(boolean force) {
+        Display d = displays.getDisplay(Display.DEFAULT_DISPLAY);
+        boolean off = d != null && d.getState() == Display.STATE_OFF;
+        if (off == screenOff && !force) return; // brilho etc. também disparam
+        screenOff = off;
+        boolean ok = longPress == null || longPress.setEnabled(!off);
+        Diag.log(this, (off ? "tela 100% apagada → toque duplo" : "tela acesa/AOD → segurar") + (ok ? "" : " · falha ao trocar ouvinte"));
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -145,6 +170,7 @@ public class SkipService extends Service {
         if (value < 0 || prev < 0 || value == prev) return;
         long now = SystemClock.elapsedRealtime();
         if (now < ignoreUntil) return; // mudança feita por nós mesmos
+        if (longPress != null && !screenOff) return; // tela acesa/AOD: o ouvinte de toque longo cuida
 
         if (fired) { // tecla ainda segurada após disparar: desfaz cada passo na hora
             if (value == pressStartVolume) return; // é o nosso próprio ajuste
@@ -157,8 +183,10 @@ public class SkipService extends Service {
 
         int d = Integer.signum(value - prev);
         long gap = now - lastEvent;
-        if (d != direction || gap > NEW_PRESS_MS) pressStartVolume = prev;
-        fastCount = (d == direction && gap <= REPEAT_MS) ? fastCount + 1 : 0;
+        boolean fast = d == direction && gap <= (screenOff ? DOUBLE_TAP_MS : REPEAT_MS);
+        if (screenOff) Diag.log(this, "toque " + (d > 0 ? "+" : "−") + " intervalo=" + gap + "ms" + (fast ? " → duplo" : ""));
+        if (!fast) pressStartVolume = prev; // 1º toque (ou 1º passo): volume a restaurar
+        fastCount = fast ? fastCount + 1 : 0;
         direction = d;
         lastEvent = now;
 
@@ -218,7 +246,7 @@ public class SkipService extends Service {
         return new Notification.Builder(this, "svc")
                 .setSmallIcon(android.R.drawable.ic_media_next)
                 .setContentTitle("RenanSkip ativo")
-                .setContentText("Segure volume + para próxima, volume − para anterior")
+                .setContentText("Segure (ou, com a tela apagada, toque 2× rápido) volume + / −")
                 .setContentIntent(open)
                 .setOngoing(true)
                 .build();

@@ -129,7 +129,7 @@ public class MainActivity extends Activity {
         how.addView(vDiv, vlp);
         how.addView(keyRow("−", "Anterior", "Vibra 2x"), new LinearLayout.LayoutParams(0, -2, 1));
         col.addView(how, spaced(8));
-        TextView note = text("Toque rápido continua mudando o volume.", 13, muted, false);
+        TextView note = text("Segure a tecla. Com a tela 100% apagada: dois toques bem rápidos. Toque simples continua mudando o volume.", 13, muted, false);
         note.setPadding(dp(4), 0, dp(4), dp(28));
         col.addView(note);
 

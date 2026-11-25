@@ -31,6 +31,7 @@ final class LongPress {
     private final Class<?> listenerType;
     private final Method setListener, dispatch;
     private final Object listener;
+    private boolean enabled = true;
 
     static boolean granted(Context c) {
         return c.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED;
@@ -79,10 +80,16 @@ final class LongPress {
         try {
             register(false);
             dispatch.invoke(msm, e, AudioManager.USE_DEFAULT_STREAM_TYPE, false);
-            register(true);
+            register(enabled);
         } catch (Throwable t) {
             Log.w("RenanSkip", "falha ao repassar tecla", t);
         }
+    }
+
+    /** Solta (false) ou retoma (true) o ouvinte; solto, o volume muda já ao apertar. */
+    boolean setEnabled(boolean on) {
+        enabled = on;
+        try { register(on); return true; } catch (Throwable t) { Log.w("RenanSkip", "falha ao trocar ouvinte", t); return false; }
     }
 
     void stop() {
