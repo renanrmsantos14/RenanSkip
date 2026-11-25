@@ -107,9 +107,14 @@ public class MainActivity extends Activity {
         // Como usar
         col.addView(label("Como usar"));
         LinearLayout how = card();
-        how.addView(keyRow("+", "Próxima faixa", "Segure volume + · vibra 1x"));
-        how.addView(divider());
-        how.addView(keyRow("−", "Faixa anterior", "Segure volume − · vibra 2x"));
+        how.setOrientation(LinearLayout.HORIZONTAL);
+        how.addView(keyRow("+", "Próxima", "Vibra 1x"), new LinearLayout.LayoutParams(0, -2, 1));
+        View vDiv = new View(this);
+        vDiv.setBackgroundColor(line);
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(Math.max(1, dp(1) / 2), -1);
+        vlp.setMargins(0, dp(14), 0, dp(14));
+        how.addView(vDiv, vlp);
+        how.addView(keyRow("−", "Anterior", "Vibra 2x"), new LinearLayout.LayoutParams(0, -2, 1));
         col.addView(how, spaced(8));
         TextView note = text("Toque rápido continua mudando o volume.", 13, muted, false);
         note.setPadding(dp(4), 0, dp(4), dp(28));
@@ -299,6 +304,7 @@ public class MainActivity extends Activity {
 
     private View keyRow(String key, String titleText, String subText) {
         LinearLayout r = row();
+        r.setPadding(dp(14), dp(14), dp(14), dp(14));
         TextView cap = text(key, 18, ink, true);
         cap.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         cap.setGravity(Gravity.CENTER);
@@ -307,12 +313,12 @@ public class MainActivity extends Activity {
         d.setStroke(Math.max(1, dp(1) / 2), line);
         d.setColor(bg);
         cap.setBackground(d);
-        r.addView(cap, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        r.addView(cap, new LinearLayout.LayoutParams(dp(36), dp(36)));
         LinearLayout t = new LinearLayout(this);
         t.setOrientation(LinearLayout.VERTICAL);
-        t.setPadding(dp(14), 0, 0, 0);
-        t.addView(text(titleText, 16, ink, true));
-        TextView s = text(subText, 14, muted, false);
+        t.setPadding(dp(12), 0, 0, 0);
+        t.addView(text(titleText, 15, ink, true));
+        TextView s = text(subText, 13, muted, false);
         s.setPadding(0, dp(2), 0, 0);
         t.addView(s);
         r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
