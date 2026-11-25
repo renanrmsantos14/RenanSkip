@@ -1,6 +1,5 @@
 package br.renan.renanskip;
 
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -17,10 +16,8 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -30,14 +27,14 @@ import android.widget.Toast;
 
 /** Tela única, monocromática: estado, como usar e ajustes. UI feita em código (sem AndroidX). */
 public class MainActivity extends Activity {
-    // Paleta (claro / escuro): monocromático quente, um único acento para "ativo".
+    // Paleta (claro / escuro): neutra, um único acento para "ativo" (lima da logo no escuro).
     private int bg, surface, line, ink, muted, okFg, okBg, warnFg, warnBg;
+    private boolean dark;
     private float density;
-    private final PathInterpolator easeOut = new PathInterpolator(.23f, 1f, .32f, 1f);
 
     private SharedPreferences prefs;
     private Switch enabled;
-    private TextView statusLine, modePill, batteryPill, updateTitle;
+    private TextView statusTitle, statusLine, modePill, batteryPill, updateTitle;
     private View statusDot, updateCard;
     private Updater.Release release;
 
@@ -80,9 +77,9 @@ public class MainActivity extends Activity {
         hTitle.setGravity(Gravity.CENTER_VERTICAL);
         statusDot = new View(this);
         hTitle.addView(statusDot, new LinearLayout.LayoutParams(dp(8), dp(8)));
-        TextView ht = text("Ativado", 20, ink, true);
-        ht.setPadding(dp(10), 0, 0, 0);
-        hTitle.addView(ht);
+        statusTitle = text("", 20, ink, true);
+        statusTitle.setPadding(dp(10), 0, 0, 0);
+        hTitle.addView(statusTitle);
         statusLine = text("", 14, muted, false);
         statusLine.setPadding(0, dp(4), 0, 0);
         hText.addView(hTitle);
@@ -159,7 +156,6 @@ public class MainActivity extends Activity {
         root.addView(ver, lp);
         setContentView(root);
         systemBars();
-        enter(col);
     }
 
     @Override protected void onResume() {
@@ -180,13 +176,9 @@ public class MainActivity extends Activity {
                 : "Pronto. Segure o volume com a música tocando.");
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
-        dot.setColor(on ? okFg : line);
+        dot.setColor(on ? okFg : muted);
         statusDot.setBackground(dot);
-        if (on && ValueAnimator.areAnimatorsEnabled()) { // pequeno "pulso" ao ligar
-            statusDot.setScaleX(0.4f);
-            statusDot.setScaleY(0.4f);
-            statusDot.animate().scaleX(1).scaleY(1).setDuration(260).setInterpolator(easeOut).start();
-        }
+        statusTitle.setText(on ? "Ativado" : "Desligado");
     }
 
     private void copyAdbCommand() {
@@ -203,10 +195,7 @@ public class MainActivity extends Activity {
                     release = r;
                     boolean show = r != null;
                     if (show) updateTitle.setText("Versão " + r.version + " disponível");
-                    if (show && updateCard.getVisibility() != View.VISIBLE) {
-                        updateCard.setVisibility(View.VISIBLE);
-                        fadeUp(updateCard, 0);
-                    } else if (!show) updateCard.setVisibility(View.GONE);
+                    updateCard.setVisibility(show ? View.VISIBLE : View.GONE);
                 });
             } catch (Exception ignored) { } // sem internet: tenta de novo na próxima abertura
         }).start();
@@ -238,51 +227,30 @@ public class MainActivity extends Activity {
     // ---------- visual ----------
 
     private void palette() {
-        boolean dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        bg = dark ? 0xFF111110 : 0xFFF7F6F3;
-        surface = dark ? 0xFF1A1A19 : 0xFFFFFFFF;
-        line = dark ? 0xFF2C2C2A : 0xFFE9E8E4;
-        ink = dark ? 0xFFEDEDEC : 0xFF1A1A19;
-        muted = dark ? 0xFF9B9A97 : 0xFF787774;
-        okFg = dark ? 0xFF7FC48A : 0xFF346538;
-        okBg = dark ? 0xFF1E2B20 : 0xFFEDF3EC;
-        warnFg = dark ? 0xFFE3B66B : 0xFF956400;
-        warnBg = dark ? 0xFF2E2615 : 0xFFFBF3DB;
+        dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        bg = dark ? 0xFF0E0F11 : 0xFFF7F6F3;
+        surface = dark ? 0xFF1A1B1E : 0xFFFFFFFF;
+        line = dark ? 0xFF2B2D32 : 0xFFE9E8E4;
+        ink = dark ? 0xFFF2F3F5 : 0xFF1A1A19;
+        muted = dark ? 0xFFA3A7AE : 0xFF6B6A67;
+        okFg = dark ? 0xFFC8FF3D : 0xFF346538;
+        okBg = dark ? 0xFF232B14 : 0xFFEDF3EC;
+        warnFg = dark ? 0xFFF5B94A : 0xFF8A5C00;
+        warnBg = dark ? 0xFF2E2410 : 0xFFFBF3DB;
     }
 
     private void systemBars() {
         getWindow().setStatusBarColor(bg);
         getWindow().setNavigationBarColor(bg);
-        boolean dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         if (!dark) getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
 
-    /** Entrada em cascata: sobe 12dp e aparece, 40ms entre blocos. Desligado se o sistema reduz animações. */
-    private void enter(LinearLayout col) {
-        for (int i = 0; i < col.getChildCount(); i++) fadeUp(col.getChildAt(i), i * 40L);
-    }
-
-    private void fadeUp(View v, long delay) {
-        if (!ValueAnimator.areAnimatorsEnabled()) return;
-        v.setAlpha(0f);
-        v.setTranslationY(dp(12));
-        v.animate().alpha(1f).translationY(0).setStartDelay(delay).setDuration(320).setInterpolator(easeOut).start();
-    }
-
-    /** Toque: encolhe 3% ao pressionar e volta ao soltar, com ripple sutil. */
+    /** Toque: só o ripple do sistema, sem animação extra. */
     private void pressable(View v, View.OnClickListener click) {
         v.setClickable(true);
         v.setOnClickListener(click);
         v.setForeground(new RippleDrawable(ColorStateList.valueOf(ink & 0x14FFFFFF), null, v.getBackground() != null ? v.getBackground() : new GradientDrawable()));
-        v.setOnTouchListener((view, e) -> {
-            if (!ValueAnimator.areAnimatorsEnabled()) return false;
-            if (e.getAction() == MotionEvent.ACTION_DOWN)
-                view.animate().scaleX(0.985f).scaleY(0.985f).setStartDelay(0).setDuration(100).setInterpolator(easeOut).start();
-            else if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL)
-                view.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(160).setInterpolator(easeOut).start();
-            return false;
-        });
     }
 
     private LinearLayout card() {
@@ -376,8 +344,8 @@ public class MainActivity extends Activity {
         Switch s = new Switch(this);
         s.setChecked(checked);
         int[][] states = {{android.R.attr.state_checked}, {}};
-        s.setThumbTintList(new ColorStateList(states, new int[]{surface, 0xFFFFFFFF}));
-        s.setTrackTintList(new ColorStateList(states, new int[]{ink, line}));
+        s.setThumbTintList(new ColorStateList(states, new int[]{dark ? bg : surface, dark ? muted : 0xFFFFFFFF}));
+        s.setTrackTintList(new ColorStateList(states, new int[]{dark ? okFg : ink, line}));
         s.setTrackTintMode(android.graphics.PorterDuff.Mode.SRC);
         return s;
     }
