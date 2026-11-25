@@ -12,6 +12,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.media.AudioManager;
+import android.media.AudioPlaybackConfiguration;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -21,6 +22,8 @@ import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.KeyEvent;
+
+import java.util.List;
 
 /**
  * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
@@ -63,6 +66,24 @@ public class SkipService extends Service {
         @Override public void onReceive(Context c, Intent i) { onVolume(i); }
     };
 
+    /*
+     * Com a tela 100% apagada o player toca em "offload" (o chip de áudio toca sozinho) e o
+     * processador dorme logo após a tecla descer. O sistema só reconhece o toque longo por um
+     * temporizador interno, que não dispara com o processador dormindo. Então mantemos o
+     * processador acordado só enquanto a tela está apagada e há música tocando.
+     */
+    private PowerManager.WakeLock awake;
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) { updateWakeLock(); }
+    };
+    private final AudioManager.AudioPlaybackCallback playback = new AudioManager.AudioPlaybackCallback() {
+        @Override public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
+            updateWakeLock();
+            // ao pausar, isMusicActive() ainda fica verdadeiro por alguns segundos
+            handler.postDelayed(SkipService.this::updateWakeLock, 5000);
+        }
+    };
+
     @Override public void onCreate() {
         super.onCreate();
         audio = getSystemService(AudioManager.class);
@@ -75,6 +96,21 @@ public class SkipService extends Service {
             else registerReceiver(receiver, f);
         }
         handler.postDelayed(updateCheck, 60_000);
+
+        awake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RenanSkip:teclas");
+        awake.setReferenceCounted(false);
+        IntentFilter sf = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        sf.addAction(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenReceiver, sf);
+        audio.registerAudioPlaybackCallback(playback, handler);
+        updateWakeLock();
+    }
+
+    private void updateWakeLock() {
+        boolean screenOff = !getSystemService(PowerManager.class).isInteractive();
+        boolean need = screenOff && audio.isMusicActive();
+        if (need && !awake.isHeld()) awake.acquire();
+        else if (!need && awake.isHeld()) awake.release();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -95,6 +131,9 @@ public class SkipService extends Service {
         if (longPress != null) longPress.stop();
         else unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
+        audio.unregisterAudioPlaybackCallback(playback);
+        unregisterReceiver(screenReceiver);
+        if (awake.isHeld()) awake.release();
         super.onDestroy();
     }
 
