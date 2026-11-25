@@ -104,11 +104,11 @@ public class SkipService extends Service {
         longPress = LongPress.start(this, handler, this::onLongPress);
         running = true;
         longPressActive = longPress != null;
-        if (longPress == null) { // sem a permissão do ADB: detecta pela mudança de volume
-            IntentFilter f = new IntentFilter(ACTION_VOLUME);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
-            else registerReceiver(receiver, f);
-        }
+        // Mudança de volume: modo principal sem a permissão do ADB. Com a permissão, vale só com a
+        // tela 100% apagada, porque aí o HyperOS não entrega a tecla ao ouvinte de toque longo.
+        IntentFilter f = new IntentFilter(ACTION_VOLUME);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+        else registerReceiver(receiver, f);
         handler.postDelayed(updateCheck, 60_000);
 
         awake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RenanSkip:teclas");
@@ -134,7 +134,6 @@ public class SkipService extends Service {
         else startForeground(1, n);
         if (longPress == null && LongPress.granted(this)) { // permissão dada pelo ADB com o serviço rodando
             longPress = LongPress.start(this, handler, this::onLongPress);
-            if (longPress != null) unregisterReceiver(receiver);
             longPressActive = longPress != null;
         }
         return START_STICKY;
@@ -145,7 +144,7 @@ public class SkipService extends Service {
         running = false;
         longPressActive = false;
         if (longPress != null) longPress.stop();
-        else unregisterReceiver(receiver);
+        unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
         audio.unregisterAudioPlaybackCallback(playback);
         unregisterReceiver(screenReceiver);
@@ -183,7 +182,10 @@ public class SkipService extends Service {
 
     private void onVolume(Intent i) {
         if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
-        Diag.log(this, "volume " + i.getIntExtra(EXTRA_PREV, -1) + "→" + i.getIntExtra(EXTRA_VALUE, -1));
+        boolean interactive = getSystemService(PowerManager.class).isInteractive();
+        Diag.log(this, "volume " + i.getIntExtra(EXTRA_PREV, -1) + "→" + i.getIntExtra(EXTRA_VALUE, -1)
+                + (interactive ? " · tela acesa" : " · tela apagada"));
+        if (longPress != null && interactive) return; // tela acesa/AOD: o ouvinte de toque longo cuida
         int value = i.getIntExtra(EXTRA_VALUE, -1), prev = i.getIntExtra(EXTRA_PREV, -1);
         if (value < 0 || prev < 0 || value == prev) return;
         long now = SystemClock.elapsedRealtime();
