@@ -31,6 +31,7 @@ final class LongPress {
     private final Class<?> listenerType;
     private final Method setListener, dispatch;
     private final Object listener;
+    private boolean enabled = true;
 
     static boolean granted(Context c) {
         return c.checkSelfPermission(PERMISSION) == PackageManager.PERMISSION_GRANTED;
@@ -79,10 +80,18 @@ final class LongPress {
         try {
             register(false);
             dispatch.invoke(msm, e, AudioManager.USE_DEFAULT_STREAM_TYPE, false);
-            register(true);
+            register(enabled);
         } catch (Throwable t) {
             Log.w("RenanSkip", "falha ao repassar tecla", t);
         }
+    }
+
+    boolean enabled() { return enabled; }
+
+    /** Solta/retoma o ouvinte (com a tela 100% apagada o HyperOS engole a tecla se ele estiver ativo). */
+    void setEnabled(boolean on) {
+        if (on == enabled) return;
+        try { register(on); enabled = on; } catch (Throwable t) { Log.w("RenanSkip", "falha ao alternar ouvinte", t); }
     }
 
     void stop() {
