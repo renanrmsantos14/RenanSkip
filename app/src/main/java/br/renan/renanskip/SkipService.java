@@ -11,9 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
-import android.hardware.display.DisplayManager;
 import android.media.AudioManager;
-import android.media.AudioPlaybackConfiguration;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -22,10 +20,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.view.Display;
 import android.view.KeyEvent;
-
-import java.util.List;
 
 /**
  * Com a tela desligada o Android não entrega o evento da tecla de volume a apps comuns,
@@ -67,56 +62,10 @@ public class SkipService extends Service {
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { onVolume(i); }
     };
-
-    /*
-     * Com a tela 100% apagada o player toca em "offload" (o chip de áudio toca sozinho) e o
-     * processador dorme logo após a tecla descer. O sistema só reconhece o toque longo por um
-     * temporizador interno, que não dispara com o processador dormindo. Então mantemos o
-     * processador acordado só enquanto a tela está apagada e há música tocando.
-     */
-    private PowerManager.WakeLock awake;
+    /** Só registra no diagnóstico; não muda o comportamento. */
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
-            boolean off = Intent.ACTION_SCREEN_OFF.equals(i.getAction());
-            Diag.log(c, off ? "tela apagou" : "tela acendeu");
-            updateWakeLock();
-            handler.removeCallbacks(heartbeat);
-            if (off) handler.postDelayed(heartbeat, HEARTBEAT_MS);
-        }
-    };
-    /*
-     * Com a tela 100% apagada (não no AOD) e o ouvinte de toque longo ativo, o HyperOS engole as
-     * teclas de volume: nem o ouvinte recebe nem o volume muda. Então soltamos o ouvinte com o
-     * display em STATE_OFF e detectamos o aperto longo pela mudança de volume.
-     */
-    private final DisplayManager.DisplayListener displayListener = new DisplayManager.DisplayListener() {
-        @Override public void onDisplayAdded(int id) { }
-        @Override public void onDisplayRemoved(int id) { }
-        @Override public void onDisplayChanged(int id) { if (id == Display.DEFAULT_DISPLAY) updateListener(); }
-    };
-
-    private void updateListener() {
-        if (longPress == null) return;
-        Display d = getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY);
-        boolean on = d == null || d.getState() != Display.STATE_OFF;
-        if (on == longPress.enabled()) return;
-        longPress.setEnabled(on);
-        Diag.log(this, on ? "ouvinte de toque longo ativo" : "tela 100% apagada: ouvinte solto, detecção pelo volume");
-    }
-
-    /** Com a tela apagada: se as linhas "vivo" somem ou atrasam, o sistema congelou o app. */
-    private static final long HEARTBEAT_MS = 20_000;
-    private final Runnable heartbeat = new Runnable() {
-        @Override public void run() {
-            Diag.log(SkipService.this, "vivo · música=" + audio.isMusicActive() + " · wakelock=" + awake.isHeld());
-            handler.postDelayed(this, HEARTBEAT_MS);
-        }
-    };
-    private final AudioManager.AudioPlaybackCallback playback = new AudioManager.AudioPlaybackCallback() {
-        @Override public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
-            updateWakeLock();
-            // ao pausar, isMusicActive() ainda fica verdadeiro por alguns segundos
-            handler.postDelayed(SkipService.this::updateWakeLock, 5000);
+            Diag.log(c, Intent.ACTION_SCREEN_OFF.equals(i.getAction()) ? "tela apagou" : "tela acendeu");
         }
     };
 
@@ -126,30 +75,16 @@ public class SkipService extends Service {
         longPress = LongPress.start(this, handler, this::onLongPress);
         running = true;
         longPressActive = longPress != null;
-        // Mudança de volume: modo principal sem a permissão do ADB. Com a permissão, vale só com a
-        // tela 100% apagada, quando o ouvinte de toque longo fica solto (ver updateListener).
-        IntentFilter f = new IntentFilter(ACTION_VOLUME);
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
-        else registerReceiver(receiver, f);
+        if (longPress == null) { // sem a permissão do ADB: detecta pela mudança de volume
+            IntentFilter f = new IntentFilter(ACTION_VOLUME);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
+            else registerReceiver(receiver, f);
+        }
         handler.postDelayed(updateCheck, 60_000);
-
-        awake = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RenanSkip:teclas");
-        awake.setReferenceCounted(false);
         IntentFilter sf = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         sf.addAction(Intent.ACTION_SCREEN_ON);
         registerReceiver(screenReceiver, sf);
-        audio.registerAudioPlaybackCallback(playback, handler);
-        getSystemService(DisplayManager.class).registerDisplayListener(displayListener, handler);
-        updateListener();
-        updateWakeLock();
         Diag.log(this, "serviço iniciou · toque longo=" + (longPress != null) + " · v" + BuildConfig.VERSION_NAME);
-    }
-
-    private void updateWakeLock() {
-        boolean screenOff = !getSystemService(PowerManager.class).isInteractive();
-        boolean need = screenOff && audio.isMusicActive();
-        if (need && !awake.isHeld()) { awake.acquire(); Diag.log(this, "wakelock ligado"); }
-        else if (!need && awake.isHeld()) { awake.release(); Diag.log(this, "wakelock desligado"); }
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -158,23 +93,20 @@ public class SkipService extends Service {
         else startForeground(1, n);
         if (longPress == null && LongPress.granted(this)) { // permissão dada pelo ADB com o serviço rodando
             longPress = LongPress.start(this, handler, this::onLongPress);
+            if (longPress != null) unregisterReceiver(receiver);
             longPressActive = longPress != null;
-            updateListener();
         }
         return START_STICKY;
     }
 
     @Override public void onDestroy() {
         Diag.log(this, "serviço parou");
+        unregisterReceiver(screenReceiver);
         running = false;
         longPressActive = false;
         if (longPress != null) longPress.stop();
-        unregisterReceiver(receiver);
+        else unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
-        audio.unregisterAudioPlaybackCallback(playback);
-        getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);
-        unregisterReceiver(screenReceiver);
-        if (awake.isHeld()) awake.release();
         super.onDestroy();
     }
 
@@ -208,10 +140,7 @@ public class SkipService extends Service {
 
     private void onVolume(Intent i) {
         if (i.getIntExtra(EXTRA_TYPE, -1) != AudioManager.STREAM_MUSIC) return;
-        boolean interactive = getSystemService(PowerManager.class).isInteractive();
-        Diag.log(this, "volume " + i.getIntExtra(EXTRA_PREV, -1) + "→" + i.getIntExtra(EXTRA_VALUE, -1)
-                + (interactive ? " · tela acesa" : " · tela apagada"));
-        if (longPress != null && longPress.enabled()) return; // tela acesa/AOD: o ouvinte de toque longo cuida
+        Diag.log(this, "volume " + i.getIntExtra(EXTRA_PREV, -1) + "→" + i.getIntExtra(EXTRA_VALUE, -1));
         int value = i.getIntExtra(EXTRA_VALUE, -1), prev = i.getIntExtra(EXTRA_PREV, -1);
         if (value < 0 || prev < 0 || value == prev) return;
         long now = SystemClock.elapsedRealtime();
