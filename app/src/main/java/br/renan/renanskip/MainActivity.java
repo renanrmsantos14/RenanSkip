@@ -36,15 +36,15 @@ import android.widget.Toast;
 /** Tela única, monocromática: estado, como usar e ajustes. UI feita em código (sem AndroidX). */
 public class MainActivity extends Activity {
     // Paleta (claro / escuro): neutra, um único acento para "ativo" (lima da logo no escuro).
-    private int bg, surface, line, ink, muted, okFg, okBg, warnFg, warnBg;
+    private int bg, surface, line, ink, muted, okFg, okBg, warnFg, warnBg, errFg, errBg;
     private boolean dark;
     private float density;
 
     private SharedPreferences prefs;
-    private TextView statusTitle, statusLine, modePill, batteryPill, updateTitle;
-    private LinearLayout hero, settings;
-    private Chevrons heroIcon;
-    private View updateCard, lockedRow, modeRow, batRow, autoRow;
+    private TextView statusTitle, statusLine, updateTitle;
+    private View statusDot, updateCard;
+    private Toggle enabled;
+    private LinearLayout reqs;
     private Updater.Release release;
 
     @Override protected void onCreate(Bundle b) {
@@ -83,26 +83,38 @@ public class MainActivity extends Activity {
         pressable(updateCard, v -> installUpdate());
         col.addView(updateCard, spaced(12));
 
-        // Estado: o cartão inteiro é o botão de ligar/desligar
-        hero = new LinearLayout(this);
-        hero.setOrientation(LinearLayout.VERTICAL);
-        hero.setPadding(dp(22), dp(22), dp(22), dp(22));
-        hero.setBackground(heroBg(false));
-        heroIcon = new Chevrons(0, line, muted);
-        hero.addView(heroIcon, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        statusTitle = text("", 28, ink, true);
-        statusTitle.setLetterSpacing(-0.02f);
-        statusTitle.setPadding(0, dp(14), 0, 0);
-        hero.addView(statusTitle);
-        statusLine = text("", 15, muted, false);
+        // Estado: uma linha, com resumo dos requisitos e o interruptor
+        LinearLayout status = card();
+        LinearLayout sRow = row();
+        LinearLayout sText = new LinearLayout(this);
+        sText.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout sTitle = new LinearLayout(this);
+        sTitle.setGravity(Gravity.CENTER_VERTICAL);
+        statusDot = new View(this);
+        sTitle.addView(statusDot, new LinearLayout.LayoutParams(dp(10), dp(10)));
+        statusTitle = text("", 20, ink, true);
+        statusTitle.setPadding(dp(10), 0, 0, 0);
+        sTitle.addView(statusTitle);
+        statusLine = text("", 14, muted, false);
         statusLine.setPadding(0, dp(2), 0, 0);
-        hero.addView(statusLine);
-        pressable(hero, v -> {
-            prefs.edit().putBoolean(SkipService.KEY_ENABLED, !prefs.getBoolean(SkipService.KEY_ENABLED, false)).apply();
+        sText.addView(sTitle);
+        sText.addView(statusLine);
+        sRow.addView(sText, new LinearLayout.LayoutParams(0, -2, 1));
+        enabled = new Toggle(prefs.getBoolean(SkipService.KEY_ENABLED, false), on -> {
+            prefs.edit().putBoolean(SkipService.KEY_ENABLED, on).apply();
             SkipService.sync(this);
-            renderStatus();
+            render();
+            statusDot.postDelayed(this::render, 700); // o serviço sobe em seguida
         });
-        col.addView(hero, spaced(28));
+        sRow.addView(enabled, new LinearLayout.LayoutParams(dp(52), dp(32)));
+        status.addView(sRow);
+        pressable(status, v -> enabled.toggle());
+        col.addView(status, spaced(28));
+
+        // Requisitos: cada item com estado (ok, pendente, erro) e a ação para resolver
+        col.addView(label("Requisitos"));
+        reqs = card();
+        col.addView(reqs, spaced(28));
 
         // Como usar
         col.addView(label("Como usar"));
@@ -120,28 +132,24 @@ public class MainActivity extends Activity {
         note.setPadding(dp(4), 0, dp(4), dp(28));
         col.addView(note);
 
-        // Ajustes: só o que ainda precisa de atenção (ver renderSettings)
-        col.addView(label("Ajustes"));
-        settings = card();
-        Switch onlyLocked = toggle(prefs.getBoolean(SkipService.KEY_ONLY_LOCKED, true));
-        onlyLocked.setOnCheckedChangeListener((v, c) -> {
-            prefs.edit().putBoolean(SkipService.KEY_ONLY_LOCKED, c).apply();
-            renderStatus();
+        // Preferência
+        LinearLayout pref = card();
+        Toggle onlyLocked = new Toggle(prefs.getBoolean(SkipService.KEY_ONLY_LOCKED, true), on -> {
+            prefs.edit().putBoolean(SkipService.KEY_ONLY_LOCKED, on).apply();
+            render();
         });
-        lockedRow = settingRow("Só com a tela bloqueada", "Desbloqueado, o volume fica normal.", onlyLocked);
-        pressable(lockedRow, v -> onlyLocked.toggle());
-
-        modePill = pill();
-        modeRow = settingRow("Sem mexer no volume", "Libere uma vez pelo ADB.", modePill);
-        pressable(modeRow, v -> copyAdbCommand());
-
-        batteryPill = pill();
-        batRow = settingRow("Bateria sem restrições", "Evita que o HyperOS feche o app.", batteryPill);
-        pressable(batRow, v -> startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))));
-
-        autoRow = settingRow("Autostart", "Ligue nas configurações do app.", text("Abrir →", 14, ink, false));
-        pressable(autoRow, v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
-        col.addView(settings, spaced(0));
+        LinearLayout lr = row();
+        LinearLayout lt = new LinearLayout(this);
+        lt.setOrientation(LinearLayout.VERTICAL);
+        lt.addView(text("Só com a tela bloqueada", 16, ink, false));
+        TextView ls = text("Desbloqueado, o volume fica normal.", 13, muted, false);
+        ls.setPadding(0, dp(2), 0, 0);
+        lt.addView(ls);
+        lr.addView(lt, new LinearLayout.LayoutParams(0, -2, 1));
+        lr.addView(onlyLocked, new LinearLayout.LayoutParams(dp(52), dp(32)));
+        pref.addView(lr);
+        pressable(pref, v -> onlyLocked.toggle());
+        col.addView(pref, spaced(0));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -165,49 +173,110 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        boolean ignoring = getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
-        setPill(batteryPill, "Liberar", false);
-        setPill(modePill, "Copiar ADB", false);
-        renderSettings(ignoring, LongPress.granted(this));
-        renderStatus();
         SkipService.sync(this);
+        render();
+        statusDot.postDelayed(this::render, 700);
         checkUpdate();
     }
 
-    private void renderStatus() {
+    private static final int OK = 0, WARN = 1, ERR = 2, INFO = 3;
+
+    /** Estado + requisitos. Conta como problema só o que dá para detectar (Autostart não dá). */
+    private void render() {
         boolean on = prefs.getBoolean(SkipService.KEY_ENABLED, false);
-        boolean onlyLocked = prefs.getBoolean(SkipService.KEY_ONLY_LOCKED, true);
+        boolean adb = LongPress.granted(this);
+        boolean battery = getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
+        boolean running = SkipService.running;
+
+        reqs.removeAllViews();
+        int errors = 0, pending = 0;
+
+        if (on) {
+            reqs.addView(reqRow(running ? OK : ERR, "Serviço",
+                    running ? "Rodando." : "Parado.",
+                    running ? null : "Reiniciar", v -> { SkipService.sync(this); statusDot.postDelayed(this::render, 700); }));
+            reqs.addView(divider());
+            if (!running) errors++;
+        }
+
+        boolean lpFailed = on && running && adb && !SkipService.longPressActive;
+        int adbState = lpFailed ? ERR : adb ? OK : WARN;
+        reqs.addView(reqRow(adbState, "Sem mexer no volume",
+                lpFailed ? "Permissão dada, mas não ativou. Reinicie o serviço."
+                        : adb ? "Permissão concedida."
+                        : "Sem ela o volume pisca e volta. Libere uma vez pelo ADB.",
+                lpFailed ? "Reiniciar" : adb ? null : "Copiar ADB",
+                v -> { if (lpFailed) restartService(); else if (!adb) copyAdbCommand(); }));
+        if (adbState == ERR) errors++; else if (adbState == WARN) pending++;
+
+        reqs.addView(divider());
+        reqs.addView(reqRow(battery ? OK : WARN, "Bateria sem restrições",
+                battery ? "Liberada." : "O HyperOS pode encerrar o app.",
+                battery ? null : "Liberar",
+                v -> startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())))));
+        if (!battery) pending++;
+
+        reqs.addView(divider());
+        reqs.addView(reqRow(INFO, "Autostart", "Confira nas configurações.", "Abrir",
+                v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())))));
+
+        int state = !on ? INFO : errors > 0 ? ERR : pending > 0 ? WARN : OK;
         statusTitle.setText(on ? "Ativado" : "Desligado");
-        statusLine.setText(!on ? "Toque para ativar."
-                : onlyLocked ? "Segure o volume com a tela bloqueada."
-                : "Segure o volume com a música tocando.");
-        int onInk = 0xFF0E0F11;
-        statusTitle.setTextColor(on ? onInk : ink);
-        statusLine.setTextColor(on ? (onInk & 0xB3FFFFFF) : muted);
-        heroIcon.set(0, on ? (onInk & 0x59FFFFFF) : line, on ? onInk : muted);
-        Drawable fg = hero.getForeground();
-        hero.setBackground(heroBg(on));
-        hero.setForeground(fg);
-        hero.setContentDescription((on ? "Ativado" : "Desligado") + ". Toque para " + (on ? "desligar" : "ativar") + ".");
+        statusLine.setText(!on ? "Ligue para usar o volume como controle."
+                : errors > 0 ? (errors == 1 ? "1 erro nos requisitos" : errors + " erros nos requisitos")
+                : pending > 0 ? (pending == 1 ? "Funciona, com 1 pendência" : "Funciona, com " + pending + " pendências")
+                : "Tudo pronto.");
+        statusLine.setTextColor(state == ERR ? errFg : muted);
+        GradientDrawable dot = new GradientDrawable();
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(stateFg(state, muted));
+        statusDot.setBackground(dot);
+        enabled.setOn(on);
     }
 
-    /** Mostra só os ajustes pendentes; "Só com a tela bloqueada" e Autostart (não detectável) ficam sempre. */
-    private void renderSettings(boolean batteryOk, boolean modeOk) {
-        settings.removeAllViews();
-        settings.addView(lockedRow);
-        if (!modeOk) { settings.addView(divider()); settings.addView(modeRow); }
-        if (!batteryOk) { settings.addView(divider()); settings.addView(batRow); }
-        settings.addView(divider());
-        settings.addView(autoRow);
+    private void restartService() {
+        stopService(new Intent(this, SkipService.class));
+        SkipService.sync(this);
+        statusDot.postDelayed(this::render, 700);
     }
 
-    /** Ligado: lima da marca, cheio. Desligado: cartão neutro com borda. */
-    private GradientDrawable heroBg(boolean on) {
-        GradientDrawable d = new GradientDrawable();
-        d.setCornerRadius(dp(20));
-        d.setColor(on ? 0xFFC8FF3D : surface);
-        if (!on) d.setStroke(Math.max(1, dp(1) / 2), line);
-        return d;
+    private int stateFg(int st, int fallback) {
+        return st == OK ? okFg : st == WARN ? warnFg : st == ERR ? errFg : fallback;
+    }
+
+    /** Linha de requisito: selo (✓ ! ✕ ·), título, uma frase e, se houver, a ação. */
+    private View reqRow(int st, String titleText, String subText, String action, View.OnClickListener click) {
+        LinearLayout r = row();
+        r.setGravity(Gravity.TOP);
+        TextView badge = text(st == OK ? "✓" : st == WARN ? "!" : st == ERR ? "✕" : "·", 13, stateFg(st, muted), true);
+        badge.setGravity(Gravity.CENTER);
+        GradientDrawable bd = new GradientDrawable();
+        bd.setShape(GradientDrawable.OVAL);
+        bd.setColor(st == OK ? okBg : st == WARN ? warnBg : st == ERR ? errBg : line);
+        badge.setBackground(bd);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        blp.topMargin = dp(1);
+        r.addView(badge, blp);
+        LinearLayout t = new LinearLayout(this);
+        t.setOrientation(LinearLayout.VERTICAL);
+        t.setPadding(dp(12), 0, dp(12), 0);
+        t.addView(text(titleText, 15, ink, true));
+        TextView s = text(subText, 13, st == ERR ? errFg : muted, false);
+        s.setPadding(0, dp(2), 0, 0);
+        t.addView(s);
+        r.addView(t, new LinearLayout.LayoutParams(0, -2, 1));
+        if (action != null) {
+            TextView a = text(action, 13, st == ERR ? errFg : st == WARN ? warnFg : ink, true);
+            a.setPadding(dp(12), dp(6), dp(12), dp(6));
+            GradientDrawable ad = new GradientDrawable();
+            ad.setCornerRadius(dp(999));
+            ad.setColor(st == ERR ? errBg : st == WARN ? warnBg : bg);
+            if (st == INFO) ad.setStroke(Math.max(1, dp(1) / 2), line);
+            a.setBackground(ad);
+            r.addView(a);
+            pressable(r, click);
+        }
+        return r;
     }
 
     private void copyAdbCommand() {
@@ -266,6 +335,8 @@ public class MainActivity extends Activity {
         okBg = dark ? 0xFF232B14 : 0xFFEDF3EC;
         warnFg = dark ? 0xFFF5B94A : 0xFF8A5C00;
         warnBg = dark ? 0xFF2E2410 : 0xFFFBF3DB;
+        errFg = dark ? 0xFFFF7A70 : 0xFFB42318;
+        errBg = dark ? 0xFF3A1815 : 0xFFFDECEA;
     }
 
     private void systemBars() {
@@ -355,31 +426,6 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private TextView pill() {
-        TextView p = text("", 12, ink, true);
-        p.setPadding(dp(10), dp(4), dp(10), dp(4));
-        return p;
-    }
-
-    private void setPill(TextView p, String s, boolean ok) {
-        p.setText(s);
-        p.setTextColor(ok ? okFg : warnFg);
-        GradientDrawable d = new GradientDrawable();
-        d.setCornerRadius(dp(999));
-        d.setColor(ok ? okBg : warnBg);
-        p.setBackground(d);
-    }
-
-    private Switch toggle(boolean checked) {
-        Switch s = new Switch(this);
-        s.setChecked(checked);
-        int[][] states = {{android.R.attr.state_checked}, {}};
-        s.setThumbTintList(new ColorStateList(states, new int[]{dark ? bg : surface, dark ? muted : 0xFFFFFFFF}));
-        s.setTrackTintList(new ColorStateList(states, new int[]{dark ? okFg : ink, line}));
-        s.setTrackTintMode(android.graphics.PorterDuff.Mode.SRC);
-        return s;
-    }
-
     private TextView text(String s, float sp, int color, boolean medium) {
         TextView t = new TextView(this);
         t.setText(s);
@@ -430,6 +476,55 @@ public class MainActivity extends Activity {
             path.lineTo(x * s, 68 * s);
             p.setColor(color);
             c.drawPath(path, p);
+        }
+    }
+
+    /** Interruptor desenhado: ligado = trilho cheio (lima no escuro, tinta no claro); desligado = contorno forte. */
+    private class Toggle extends View {
+        private boolean on;
+        private final java.util.function.Consumer<Boolean> onChange;
+        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        Toggle(boolean on, java.util.function.Consumer<Boolean> onChange) {
+            super(MainActivity.this);
+            this.on = on;
+            this.onChange = onChange;
+            setClickable(true);
+            setOnClickListener(v -> toggle());
+        }
+
+        void toggle() {
+            on = !on;
+            invalidate();
+            onChange.accept(on);
+            sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED);
+        }
+
+        void setOn(boolean v) { on = v; invalidate(); }
+
+        @Override protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight(), r = h / 2f, sw = dp(2);
+            if (on) {
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(dark ? okFg : ink);
+                c.drawRoundRect(0, 0, w, h, r, r, p);
+                p.setColor(dark ? bg : 0xFFFFFFFF);
+                c.drawCircle(w - r, r, r - dp(4), p);
+            } else {
+                p.setStyle(Paint.Style.STROKE);
+                p.setStrokeWidth(sw);
+                p.setColor(muted);
+                c.drawRoundRect(sw / 2, sw / 2, w - sw / 2, h - sw / 2, r, r, p);
+                p.setStyle(Paint.Style.FILL);
+                c.drawCircle(r, r, r - dp(8), p);
+            }
+        }
+
+        @Override public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);
+            info.setClassName(Switch.class.getName());
+            info.setCheckable(true);
+            info.setChecked(on);
         }
     }
 }

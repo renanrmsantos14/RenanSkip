@@ -30,6 +30,8 @@ import android.view.KeyEvent;
  */
 public class SkipService extends Service {
     static final String PREFS = "prefs", KEY_ENABLED = "enabled", KEY_ONLY_LOCKED = "only_locked";
+    /** Estado lido pela tela (mesmo processo). */
+    static volatile boolean running, longPressActive;
     private static final String ACTION_VOLUME = "android.media.VOLUME_CHANGED_ACTION";
     private static final String EXTRA_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
     private static final String EXTRA_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
@@ -65,6 +67,8 @@ public class SkipService extends Service {
         super.onCreate();
         audio = getSystemService(AudioManager.class);
         longPress = LongPress.start(this, handler, this::onLongPress);
+        running = true;
+        longPressActive = longPress != null;
         if (longPress == null) { // sem a permissão do ADB: detecta pela mudança de volume
             IntentFilter f = new IntentFilter(ACTION_VOLUME);
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, f, Context.RECEIVER_EXPORTED);
@@ -80,11 +84,14 @@ public class SkipService extends Service {
         if (longPress == null && LongPress.granted(this)) { // permissão dada pelo ADB com o serviço rodando
             longPress = LongPress.start(this, handler, this::onLongPress);
             if (longPress != null) unregisterReceiver(receiver);
+            longPressActive = longPress != null;
         }
         return START_STICKY;
     }
 
     @Override public void onDestroy() {
+        running = false;
+        longPressActive = false;
         if (longPress != null) longPress.stop();
         else unregisterReceiver(receiver);
         handler.removeCallbacksAndMessages(null);
