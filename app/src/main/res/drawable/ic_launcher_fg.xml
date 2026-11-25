@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tecla de volume (pílula, metade de cima acesa = volume +) e "próxima faixa". Dentro da zona segura de 66dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFEDEDEC" android:pathData="M36,30a6,6 0,0 1,6 6v17h-12v-17a6,6 0,0 1,6 -6z" />
+    <path android:fillColor="#FF4A4A47" android:pathData="M30,55h12v17a6,6 0,0 1,-6 6a6,6 0,0 1,-6 -6z" />
+    <path android:fillColor="#FF7FC48A" android:pathData="M50,40.5a2.5,2.5 0,0 1,3.8 -2.1l15.6,10.4a2.5,2.5 0,0 1,0 4.2l-15.6,10.4a2.5,2.5 0,0 1,-3.8 -2.1z" />
+    <path android:fillColor="#FF7FC48A" android:pathData="M73,39.5a2.5,2.5 0,0 1,5 0v23a2.5,2.5 0,0 1,-5 0z" />
+</vector>
