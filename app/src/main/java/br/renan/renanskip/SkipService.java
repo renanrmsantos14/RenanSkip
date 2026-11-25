@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.AudioPlaybackConfiguration;
 import android.os.Build;
@@ -19,6 +20,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.KeyEvent;
@@ -246,12 +248,25 @@ public class SkipService extends Service {
         audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
     }
 
-    /** Próxima: uma vibração. Anterior: duas curtas. */
+    /**
+     * Próxima: uma vibração. Anterior: duas curtas.
+     * No modo economia de energia o Android descarta vibrações "comuns"; só passam as de
+     * alarme, toque de chamada e afins. Por isso marcamos a vibração como de alarme.
+     */
+    @SuppressWarnings("deprecation")
     private void vibrate(boolean next) {
         Vibrator v = getSystemService(Vibrator.class);
         if (v == null) return;
         long[] pattern = next ? new long[]{0, 150} : new long[]{0, 80, 90, 80};
-        v.vibrate(VibrationEffect.createWaveform(pattern, -1));
+        VibrationEffect effect = VibrationEffect.createWaveform(pattern, -1);
+        if (Build.VERSION.SDK_INT >= 33) {
+            v.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM));
+        } else {
+            v.vibrate(effect, new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+        }
     }
 
     private Notification buildNotification() {
